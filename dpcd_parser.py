@@ -29,19 +29,21 @@ def downstream_port_type(val):
     return 'Others'
 
 def print_port_info(dpcd, port):
-  print_byte(dpcd, 8 + (port * 2))
+  addr = 8 + (port * 2)
+  print_byte(dpcd, addr)
   pfx = 'PORT{}'.format(port)
-  print_field('{} Reserved'.format(pfx), dpcd, 8, 6, 7)
-  print_field('{} Buffer size per-lane/port'.format(pfx), dpcd, 8, 5, printfn=lambda x: 'Per port' if x else 'Per lane')
-  print_field('{} Buffer size units'.format(pfx), dpcd, 8, 4, printfn=lambda x: 'Bytes' if x else 'Pixels')
-  print_field('{} HBlank expansion supported'.format(pfx), dpcd, 8, 3)
-  print_field('{} usage'.format(pfx), dpcd, 8, 2, printfn=lambda x: 'Secondary stream' if x else 'Primary stream')
-  print_field('{} Local EDID present'.format(pfx), dpcd, 8, 1)
-  print_field('{} Reserved'.format(pfx), dpcd, 8, 0)
+  print_field('{} Reserved'.format(pfx), dpcd, addr, 6, 7)
+  print_field('{} Buffer size per-lane/port'.format(pfx), dpcd, addr, 5, printfn=lambda x: 'Per port' if x else 'Per lane')
+  print_field('{} Buffer size units'.format(pfx), dpcd, addr, 4, printfn=lambda x: 'Bytes' if x else 'Pixels')
+  print_field('{} HBlank expansion supported'.format(pfx), dpcd, addr, 3)
+  print_field('{} usage'.format(pfx), dpcd, addr, 2, printfn=lambda x: 'Secondary stream' if x else 'Primary stream')
+  print_field('{} Local EDID present'.format(pfx), dpcd, addr, 1)
+  print_field('{} Reserved'.format(pfx), dpcd, addr, 0)
   print('')
 
-  print_byte(dpcd, 9 + (port * 2))
-  print_field('{} Buffer Size'.format(pfx), dpcd, 9, 0, 7, lambda x: (x + 1) * 32)
+  addr += 1
+  print_byte(dpcd, addr)
+  print_field('{} Buffer Size'.format(pfx), dpcd, addr, 0, 7, lambda x: (x + 1) * 32)
   print('')
 
 def i2c_speed_caps(val):
