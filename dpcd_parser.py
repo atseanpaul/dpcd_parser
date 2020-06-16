@@ -69,10 +69,10 @@ def main():
   if args.logs:
     data = log_reader()
     for d in data:
-      print('')
-      print('[{}] {} {} on {}'.format(d.timestamp, d.type, d.operation, d.port))
       p = parser.Parser()
       p.parse(d.bytes, d.offset)
+      print('')
+      print('[{}] {} {} [{}:{}] on {}'.format(d.timestamp, d.type, d.operation, hex(d.offset), hex(d.offset + len(d.bytes) - 1), d.port))
       p.print()
 
 

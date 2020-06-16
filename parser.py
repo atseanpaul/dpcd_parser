@@ -1,22 +1,64 @@
 import collections
 
-ParseResult = collections.namedtuple('ParseResult',
-                                     [
-                                       'register',
-                                       'start_bit',
-                                       'end_bit',
-                                       'label',
-                                       'value',
-                                       'output'
-                                     ])
-class RangeParser(object):
+class ParserBase(object):
+  pass
+
+class MultiByteParser(ParserBase):
+  Result = collections.namedtuple('Result',
+                                  [
+                                    'register',
+                                    'value',
+                                    'output'
+                                  ])
   name = None
   start = None
   end = None
 
   def __init__(self, bytes, value_offset):
     self.value = bytes[value_offset:value_offset + self.num_bytes()]
-    self.parse_result = {}
+    self.output = None
+
+  @classmethod
+  def can_parse(cls, start):
+    # TODO: add partial parsing support
+    if start >= cls.start and start <= cls.end:
+      return True
+    return False
+
+  def num_bytes(self):
+    return type(self).end - type(self).start + 1
+
+  def add_result(self, printfn=lambda x: x):
+    self.output = printfn(self.value)
+
+  def print(self):
+    print('  {:<10}{:<41}[{}]'.format(hex(type(self).start),
+                                   type(self).name,
+                              ', '.join(hex(x) for x in self.value)))
+    print('  {:<11}{:<40}{}'.format('', 'Value', self.output))
+
+  def parse(self):
+    raise NotImplementedError()
+
+
+class RangeParser(ParserBase):
+  Result = collections.namedtuple('Result',
+                                  [
+                                    'register',
+                                    'start_bit',
+                                    'end_bit',
+                                    'label',
+                                    'value',
+                                    'output'
+                                    ])
+
+  name = None
+  start = None
+  end = None
+
+  def __init__(self, bytes, value_offset):
+    self.value = bytes[value_offset:value_offset + self.num_bytes()]
+    self.parse_result = []
 
   @classmethod
   def can_parse(cls, start):
@@ -29,7 +71,7 @@ class RangeParser(object):
   def num_bytes(self):
     return type(self).end - type(self).start + 1
 
-  def __field(self, value, start_bit, end_bit):
+  def field(self, value, start_bit, end_bit):
     start_mask = ((1 << (start_bit)) - 1)
     end_mask = ((1 << (end_bit + 1)) - 1)
     mask = start_mask ^ end_mask
@@ -40,18 +82,16 @@ class RangeParser(object):
       end_bit = start_bit
     if end_bit < start_bit:
       raise ValueError('Inverted start/end bits!')
-    value = self.__field(self.value[offset], start_bit, end_bit)
-    result = ParseResult(self.name, start_bit, end_bit, label, value, printfn(value))
-    self.parse_result[start_bit] = result
+    value = self.field(self.value[offset], start_bit, end_bit)
+    result = RangeParser.Result(self.name, start_bit, end_bit, label, value, printfn(value))
+    self.parse_result.append(result)
 
   def print(self):
-    if not self.parse_result:
-      return
-    print('{:<10}{:<41}[{}]'.format(hex(type(self).start),
+    print('  {:<10}{:<41}[{}]'.format(hex(type(self).start),
                                    type(self).name,
                               ', '.join(hex(x) for x in self.value)))
-    for v in self.parse_result.values():
-      print('  [{:<3}{}:{}] {:40}{}'.format(
+    for v in self.parse_result:
+      print('    [{:<3}{}:{}] {:40}{}'.format(
               v.value,
               v.start_bit,
               v.end_bit,
@@ -160,35 +200,28 @@ class RangeDownStreamPortCount(RangeParser):
     self.add_result('Reserved', 0, 4, 5)
     self.add_result('Downstream port count', 0, 0, 3)
 
-class RangeReceivePortCap(object):
-  @staticmethod
-  def parse(parser):
-    parser.add_result('Reserved', 0, 6, 7)
-    parser.add_result('Buffer size per-lane/port', 0, 5,
+class RangeReceivePortCap(RangeParser):
+  def parse(self):
+    self.add_result('Reserved', 0, 6, 7)
+    self.add_result('Buffer size per-lane/port', 0, 5,
                       printfn=lambda x: 'Per port' if x else 'Per lane')
-    parser.add_result('Buffer size units', 0, 4,
+    self.add_result('Buffer size units', 0, 4,
                       printfn=lambda x: 'Bytes' if x else 'Pixels')
-    parser.add_result('HBlank expansion supported', 0, 3)
-    parser.add_result('usage', 0, 2, printfn=lambda x: 'Secondary stream' if x else 'Primary stream')
-    parser.add_result('Local EDID present', 0, 1)
-    parser.add_result('Reserved', 0, 0)
-    parser.add_result('Buffer Size', 1, 0, 7, lambda x: (x + 1) * 32)
+    self.add_result('HBlank expansion supported', 0, 3)
+    self.add_result('usage', 0, 2, printfn=lambda x: 'Secondary stream' if x else 'Primary stream')
+    self.add_result('Local EDID present', 0, 1)
+    self.add_result('Reserved', 0, 0)
+    self.add_result('Buffer Size', 1, 0, 7, lambda x: (x + 1) * 32)
 
-class RangeReceivePortCap0(RangeParser):
+class RangeReceivePortCap0(RangeReceivePortCap):
   name = 'RECEIVE_PORT0_CAP'
   start = 8
   end = 9
 
-  def parse(self):
-    RangeReceivePortCap.parse(self)
-
-class RangeReceivePortCap1(RangeParser):
+class RangeReceivePortCap1(RangeReceivePortCap):
   name = 'RECEIVE_PORT1_CAP'
   start = 0xA
   end = 0xB
-
-  def parse(self):
-    RangeReceivePortCap.parse(self)
 
 class RangeI2CSpeedCap(RangeParser):
   name = 'I2C Speed Control Capabilities Bit Map'
@@ -249,14 +282,450 @@ class RangeTrainingAuxInterval(RangeParser):
     self.add_result('Extended receiver caps available', 0, 7)
     self.add_result('Training AUX read interval', 0, 0, 6, self.aux_rd_interval)
 
+class RangeMSTMCaps(RangeParser):
+  name = 'MSTM_CAP'
+  start = 0x21
+  end = 0x21
+
+  def parse(self):
+    self.add_result('Reserved', 0, 2, 7)
+    self.add_result('SINGLE_STREAM_SIDEBAND_MSG_SUPPORT', 0, 1)
+    self.add_result('MST_CAP', 0, 0)
+
+class RangeDetailedCapInfo(RangeParser):
+  def dfpx_attribute(self, val):
+    ret = []
+    if val & 1:
+      ret.append('480i@60')
+    if val & 2:
+      ret.append('480i@50')
+    if val & 3:
+      ret.append('1080i@60')
+    if val & 4:
+      ret.append('1080i@50')
+    if val & 5:
+      ret.append('720p@60')
+    if val & 6:
+      ret.append('720p@50')
+    return ','.join(ret)
+
+  def dfpx_type(self, val):
+    if val == 0:
+      return 'DisplayPort'
+    elif val == 1:
+      return 'Analog VGA'
+    elif val == 2:
+      return 'DVI'
+    elif val == 3:
+      return 'HDMI'
+    elif val == 4:
+      return 'Other (No DisplayID/EDID support)'
+    elif val == 5:
+      return 'DP++'
+    elif val == 6:
+      return 'Wireless'
+    elif val == 7:
+      return 'Reserved'
+
+  def max_bits_per_component(self, val):
+    ret = ['8bpc']
+    if val & 1:
+      ret.append('10bpc')
+    if val & 2:
+      ret.append('12bpc')
+    if val & 3:
+      ret.append('16bpc')
+    return '/'.join(ret)
+
+  def parse(self):
+    self.add_result('NON_EDID_DFPX_ATTRIBUTE', 0, 4, 7, self.dfpx_attribute)
+    self.add_result('DFPX_HPD', 0, 3, 3, lambda x: 'HPD Aware' if x else 'HPD Unaware')
+    self.add_result('DFPX_TYPE', 0, 0, 2, self.dfpx_type)
+    # DP
+    type = self.field(self.value[0], 0, 2)
+    if type == 0:
+      self.add_result('Reserved', 1, 0, 7)
+      self.add_result('Reserved', 2, 0, 7)
+      self.add_result('Reserved', 3, 0, 7)
+    # VGA
+    elif type == 1:
+      self.add_result('Maximum Pixel Rate', 1, 0, 7, lambda x: '{} MP/s'.format(x * 8))
+      self.add_result('Reserved', 2, 2, 7)
+      self.add_result('Maximum Bits/component', 2, 0, 1, self.max_bits_per_component)
+      self.add_result('Reserved', 3, 0, 7)
+    # DVI
+    elif type == 2:
+      self.add_result('Maximum TMDS Char Clock Rate', 1, 0, 7, lambda x: '{} MHz'.format(x * 2.5))
+      self.add_result('Reserved', 2, 2, 7)
+      self.add_result('Maximum Bits/component', 2, 0, 1, self.max_bits_per_component)
+      self.add_result('Reserved', 3, 3, 7)
+      self.add_result('High Color Depth', 3, 2)
+      self.add_result('Dual Link', 3, 1)
+      self.add_result('Reserved', 3, 0)
+    # HDMI
+    elif type == 3:
+      self.add_result('Maximum TMDS Char Clock Rate', 1, 0, 7, lambda x: '{} MHz'.format(x * 2.5))
+      self.add_result('Reserved', 2, 2, 7)
+      self.add_result('Maximum Bits/component', 2, 0, 1, self.max_bits_per_component)
+      self.add_result('Reserved', 3, 5, 7)
+      self.add_result('CONVERSION_FROM_YCBCR444_TO_YCBCR420_SUPPORT', 3, 4)
+      self.add_result('CONVERSION_FROM_YCBCR444_TO_YCBCR422_SUPPORT', 3, 3)
+      self.add_result('YCBCR420_PASS_THROUGH_SUPPORT', 3, 2)
+      self.add_result('YCBCR422_PASS_THROUGH_SUPPORT', 3, 1)
+      self.add_result('FRAME_SEQ_TO_FRAME_PACK', 3, 0)
+    # Other
+    elif type == 4:
+      self.add_result('UNDEFINED', 1, 0, 7)
+      self.add_result('UNDEFINED', 2, 0, 7)
+      self.add_result('UNDEFINED', 3, 0, 7)
+    # DP++
+    elif type == 5:
+      self.add_result('Maximum TMDS Char Clock Rate', 1, 0, 7, lambda x: '{} MHz'.format(x * 2.5))
+      self.add_result('Reserved', 2, 2, 7)
+      self.add_result('Maximum Bits/component', 2, 0, 1, self.max_bits_per_component)
+      self.add_result('Reserved', 3, 2, 7)
+      self.add_result('UNDEFINED', 3, 1, 7)
+      self.add_result('FRAME_SEQ_TO_FRAME_PACK', 3, 0)
+    # Wireless
+    elif type == 6:
+      self.add_result('Reserved', 1, 4, 7)
+      self.add_result('WIRELESS_TECHNOLOGY', 1, 0, 3, lambda x: 'WiGig' if x == 0 else 'Reserved')
+      self.add_result('Reserved', 2, 4, 7)
+      self.add_result('WDE_TX_CONCURRENCY_CAP', 2, 2, 3)
+      self.add_result('NUMBER_OF_WDE_TX_ON_DEVICE', 2, 0, 1)
+      self.add_result('Reserved', 3, 0, 7)
+
+class RangeDetailedCapInfoDFP0(RangeDetailedCapInfo):
+  name = 'Downstream Facing Port 0 Capabilities'
+  start = 0x80
+  end = 0x83
+
+class RangeDetailedCapInfoDFP1(RangeDetailedCapInfo):
+  name = 'Downstream Facing Port 1 Capabilities'
+  start = 0x84
+  end = 0x87
+
+class RangeDetailedCapInfoDFP2(RangeDetailedCapInfo):
+  name = 'Downstream Facing Port 2 Capabilities'
+  start = 0x88
+  end = 0x8B
+
+class RangeDetailedCapInfoDFP3(RangeDetailedCapInfo):
+  name = 'Downstream Facing Port 3 Capabilities'
+  start = 0x8C
+  end = 0x8F
+
+class RangePanelReplayCap(RangeParser):
+  name = 'PANEL_REPLAY_CAPABILITY_SUPPORTED'
+  start = 0xB0
+  end = 0xB1
+
+  def parse(self):
+    self.add_result('Reserved', 0, 2, 7)
+    self.add_result('Selective Update Support', 0, 1)
+    self.add_result('Replay Support', 0, 0)
+    self.add_result('Reserved', 1, 6, 7)
+    self.add_result('Selective Update Granularity', 1, 5,
+                    lambda x: 'Required' if x else 'Not Required')
+    self.add_result('Reserved', 1, 0, 4)
+
+class RangeSinkCountParser(RangeParser):
+  def parse(self):
+    self.add_result('SINK_COUNT_bit7', 0, 7)
+    self.add_result('CP_READY', 0, 6)
+    self.add_result('SINK_COUNT', 0, 0, 5)
+
+class RangeSinkCount(RangeSinkCountParser):
+  name = 'SINK_COUNT'
+  start = 0x200
+  end = 0x200
+
+class RangeDeviceServiceIRQParser(RangeParser):
+  def parse(self):
+    self.add_result('Reserved', 0, 7)
+    self.add_result('SINK_SPECIFIC_IRQ', 0, 6)
+    self.add_result('UP_REQ_MSG_RDY', 0, 5)
+    self.add_result('DOWN_REP_MSG_RDY', 0, 4)
+    self.add_result('MCCS_IRQ', 0, 3)
+    self.add_result('CP_IRQ', 0, 2)
+    self.add_result('AUTOMATED_TEST_REQUEST', 0, 1)
+    self.add_result('REMOTE_CONTROL_COMMAND_PENDING', 0, 0)
+
+class RangeDeviceServiceIRQ(RangeDeviceServiceIRQParser):
+  name = 'DEVICE_SERVICE_IRQ_VECTOR'
+  start = 0x201
+  end = 0x201
+
+class RangeLaneStatus(RangeParser):
+  def __init__(self, bytes, value_offset, lane_offset):
+    super().__init__(bytes, value_offset)
+    self.pfx = ('LANE{}'.format(lane_offset), 'LANE{}'.format(lane_offset))
+
+  def parse(self):
+    self.add_result('Reserved', 0, 7)
+    self.add_result('{}_SYMBOL_LOCKED'.format(self.pfx[1]), 0, 6)
+    self.add_result('{}_CHANNEL_EQ'.format(self.pfx[1]), 0, 5)
+    self.add_result('{}_CR_DONE'.format(self.pfx[1]), 0, 4)
+    self.add_result('Reserved', 0, 3)
+    self.add_result('{}_SYMBOL_LOCKED'.format(self.pfx[0]), 0, 2)
+    self.add_result('{}_CHANNEL_EQ'.format(self.pfx[0]), 0, 1)
+    self.add_result('{}_CR_DONE'.format(self.pfx[0]), 0, 0)
+
+class RangeLane01Status(RangeLaneStatus):
+  name = 'LANE0_1_STATUS'
+  start = 0x202
+  end = 0x202
+
+  def __init__(self, bytes, value_offset):
+    super().__init__(bytes, value_offset, 0)
+
+class RangeLane23Status(RangeLaneStatus):
+  name = 'LANE2_3_STATUS'
+  start = 0x202
+  end = 0x202
+
+  def __init__(self, bytes, value_offset):
+    super().__init__(bytes, value_offset, 2)
+
+class RangeLaneAlignStatusUpdatedParser(RangeParser):
+  def parse(self):
+    self.add_result('LINK_STATUS_UPDATED', 0, 7)
+    self.add_result('DOWNSTREAM_PORT_STATUS_CHANGED', 0, 6)
+    self.add_result('Reserved', 0, 2, 5)
+    self.add_result('POST_LT_ADJ_REQ_IN_PROGRESS', 0, 1)
+    self.add_result('INTERLANE_ALIGN_DONE', 0, 0)
+
+class RangeLaneAlignStatusUpdated(RangeLaneAlignStatusUpdatedParser):
+  name = 'LANE_ALIGN_STATUS_UPDATED'
+  start = 0x204
+  end = 0x204
+
+class RangeSinkStatusParser(RangeParser):
+  def parse(self):
+    self.add_result('Reserved', 0, 3, 7)
+    self.add_result('STREAM_REGENERATION_STATUS', 0, 2)
+    self.add_result('RECEIVE_PORT_1_STATUS', 0, 1, printfn=lambda x: '{} sync'.format('IN' if x else 'OUT'))
+    self.add_result('RECEIVE_PORT_0_STATUS', 0, 0, printfn=lambda x: '{} sync'.format('IN' if x else 'OUT'))
+
+class RangeSinkStatus(RangeSinkStatusParser):
+  name = 'SINK_STATUS'
+  start = 0x205
+  end = 0x205
+
+class MultiByteIEEEOUI(MultiByteParser):
+  def parse(self):
+    self.add_result(lambda x: '{}-{}-{}'.format(
+                    hex(x[0])[2:],
+                    hex(x[1])[2:],
+                    hex(x[2])[2:]))
+
+class MultiByteSinkIEEEOUI(MultiByteIEEEOUI):
+  name = 'Sink IEEE_OUI'
+  start = 0x400
+  end = 0x402
+
+class MultiByteDeviceId(MultiByteParser):
+  def parse(self):
+    self.add_result(lambda x: '"{}"'.format(bytes(x).decode('utf-8')))
+
+class MultiByteSinkDeviceId(MultiByteDeviceId):
+  name = 'Sink Device Identification String'
+  start = 0x403
+  end = 0x408
+
+class RangeHardwareRevision(RangeParser):
+  def parse(self):
+    self.add_result('Minor Revision', 0, 0, 3)
+    self.add_result('Major Revision', 0, 4, 7)
+
+class RangeSinkHardwareRevision(RangeHardwareRevision):
+  name = 'Sink Hardware Revision'
+  start = 0x409
+  end = 0x409
+
+class RangeFirmwareMajorRevision(RangeParser):
+  def parse(self):
+    self.add_result('Revision', 0, 0, 7)
+
+class RangeSinkFirmwareMajorRevision(RangeFirmwareMajorRevision):
+  name = 'Sink Firmware Major Revision'
+  start = 0x40A
+  end = 0x40A
+
+class RangeFirmwareMinorRevision(RangeParser):
+  def parse(self):
+    self.add_result('Revision', 0, 0, 7)
+
+class RangeSinkFirmwareMinorRevision(RangeFirmwareMinorRevision):
+  name = 'Sink Firmware Minor Revision'
+  start = 0x40B
+  end = 0x40B
+
+class MultiByteReserved40C(MultiByteParser):
+  name = 'RESERVED'
+  start = 0x40C
+  end = 0x4FF
+
+  def parse(self):
+    self.add_result()
+
+class MultiByteBranchIEEEOUI(MultiByteIEEEOUI):
+  name = 'Branch IEEE_OUI'
+  start = 0x500
+  end = 0x502
+
+class MultiByteBranchDeviceId(MultiByteDeviceId):
+  name = 'Branch Device Identification String'
+  start = 0x503
+  end = 0x508
+
+class RangeBranchHardwareRevision(RangeHardwareRevision):
+  name = 'Branch Hardware Revision'
+  start = 0x509
+  end = 0x509
+
+class RangeBranchFirmwareMajorRevision(RangeFirmwareMajorRevision):
+  name = 'Branch Firmware Major Revision'
+  start = 0x50A
+  end = 0x50A
+
+class RangeBranchFirmwareMinorRevision(RangeFirmwareMinorRevision):
+  name = 'Branch Firmware Minor Revision'
+  start = 0x50B
+  end = 0x50B
+
+class MultiByteDownRequest(MultiByteParser):
+  name = 'DOWN_REQ'
+  start = 0x1000
+  end = 0x11FF
+
+  def parse(self):
+    self.add_result()
+
+class MultiByteUpReply(MultiByteParser):
+  name = 'UP_REP'
+  start = 0x1200
+  end = 0x13FF
+
+  def parse(self):
+    self.add_result()
+
+class MultiByteDownReply(MultiByteParser):
+  name = 'DOWN_REP'
+  start = 0x1400
+  end = 0x15FF
+
+  def parse(self):
+    self.add_result()
+
+class MultiByteUpRequest(MultiByteParser):
+  name = 'UP_REQ'
+  start = 0x1600
+  end = 0x17FF
+
+  def parse(self):
+    self.add_result()
+
+class RangeSinkCountESI(RangeSinkCountParser):
+  name = 'SINK_COUNT_ESI'
+  start = 0x2002
+  end = 0x2002
+
+class RangeDeviceServiceIRQESI0(RangeDeviceServiceIRQParser):
+  name = 'DEVICE_SERVICE_IRQ_VECTOR_ESI0'
+  start = 0x2003
+  end = 0x2003
+
+class RangeDeviceServiceIRQESI1(RangeParser):
+  name = 'DEVICE_SERVICE_IRQ_VECTOR_ESI1'
+  start = 0x2004
+  end = 0x2004
+
+  def parse(self):
+    self.add_result('Reserved', 0, 5, 7)
+    self.add_result('DSC_ERROR_STATUS', 0, 4)
+    self.add_result('PANEL_REPLAY_ERROR_STATUS', 0, 3)
+    self.add_result('CEC_IRQ', 0, 2)
+    self.add_result('LOCK_ACQUISITION_REQUEST', 0, 1)
+    self.add_result('RX_GTC_MSTR_REQ_STATUS_CHANGE', 0, 0)
+
+class RangeLinkServiceIRQESI0(RangeParser):
+  name = 'LINK_SERVICE_IRQ_VECTOR_ESI0'
+  start = 0x2005
+  end = 0x2005
+
+  def parse(self):
+    self.add_result('Reserved', 0, 5, 7)
+    self.add_result('CONNECTED_OFF_ENTRY_REQUESTED', 0, 4)
+    self.add_result('HDMI_LINK_STATUS_CHANGED', 0, 3)
+    self.add_result('STREAM_STATUS_CHANGED', 0, 2)
+    self.add_result('LINK_STATUS_CHANGED', 0, 1)
+    self.add_result('RX_CAP_CHANGED', 0, 0)
+
+class RangeEDPPSR(RangeParser):
+  name = 'eDP PSR Registers (TODO)'
+  start = 0x2006
+  end = 0x200B
+
+  # TODO
+  def parse(self):
+    self.add_result('Reserved', 0, 0, 7)
+    self.add_result('Reserved', 1, 0, 7)
+    self.add_result('Reserved', 2, 0, 7)
+    self.add_result('Reserved', 3, 0, 7)
+    self.add_result('Reserved', 4, 0, 7)
+
+class RangeLane01StatusESI(RangeLaneStatus):
+  name = 'LANE0_1_STATUS_ESI'
+  start = 0x200C
+  end = 0x200C
+
+  def __init__(self, bytes, value_offset):
+    super().__init__(bytes, value_offset, 0)
+
+class RangeLane23StatusESI(RangeLaneStatus):
+  name = 'LANE2_3_STATUS_ESI'
+  start = 0x200D
+  end = 0x200D
+
+  def __init__(self, bytes, value_offset):
+    super().__init__(bytes, value_offset, 2)
+
+class RangeLaneAlignStatusUpdatedESI(RangeLaneAlignStatusUpdatedParser):
+  name = 'LANE_ALIGN_STATUS_UPDATED_ESI'
+  start = 0x200E
+  end = 0x200E
+
+class RangeSinkStatusESI(RangeSinkStatusParser):
+  name = 'SINK_STATUS_ESI'
+  start = 0x200F
+  end = 0x200F
+
+class RangeCECTunnelingCap(RangeParser):
+  name = 'CEC_TUNNELING_CAPABILITY'
+  start = 0x3000
+  end = 0x3000
+
+  def parse(self):
+    self.add_result('CEC_TUNNELING_CAPABLE', 0, 0)
+    self.add_result('CEC_SNOOPING_CAPABLE', 0, 1)
+    self.add_result('CEC_MULTIPLE_LA_CAPABLE', 0, 2)
+    self.add_result('Reserved', 0, 3, 7)
 
 class Parser(object):
   def __init__(self):
-    self.registry = []
-    for c in RangeParser.__subclasses__():
-      self.registry.append(c)
+    self.registry = self.build_registry(ParserBase)
     self.result = []
     self.unparsed = {}
+
+  def build_registry(self, cls):
+    ret = []
+    for c in cls.__subclasses__():
+      ret += self.build_registry(c)
+    # BADCODE: assume if a class is subclassed, it is not a parser
+    if not ret:
+      ret.append(cls)
+    return ret
 
   def parse(self, bytes, offset):
     i = 0
@@ -282,6 +751,12 @@ class Parser(object):
   def print(self):
     for r in self.result:
       r.print()
+
+    if not self.unparsed:
+      return
+
+    print('')
+    print('-- Unparsed values')
     for a,v in self.unparsed.items():
       print('{:<10}{:<41}[{}]'.format(hex(a),
                                      'UNKNOWN',
