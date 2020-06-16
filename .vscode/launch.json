@@ -5,12 +5,20 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Python: Current File",
+      "name": "DPCD test",
       "type": "python",
       "request": "launch",
-      "program": "${file}",
+      "program": "dpcd_parser.py",
       "console": "integratedTerminal",
       "args": ["--dpcd", "12 14 c2 01 01 15 01 81 02 01 04 01 0f 00 01"]
+    },
+    {
+      "name": "LOGS test",
+      "type": "python",
+      "request": "launch",
+      "program": "dpcd_parser.py",
+      "console": "integratedTerminal",
+      "args": ["--logs"]
     }
   ]
 }
