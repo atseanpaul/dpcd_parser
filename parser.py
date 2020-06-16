@@ -481,8 +481,8 @@ class RangeLane01Status(RangeLaneStatus):
 
 class RangeLane23Status(RangeLaneStatus):
   name = 'LANE2_3_STATUS'
-  start = 0x202
-  end = 0x202
+  start = 0x203
+  end = 0x203
 
   def __init__(self, bytes, value_offset):
     super().__init__(bytes, value_offset, 2)
@@ -711,6 +711,141 @@ class RangeCECTunnelingCap(RangeParser):
     self.add_result('CEC_SNOOPING_CAPABLE', 0, 1)
     self.add_result('CEC_MULTIPLE_LA_CAPABLE', 0, 2)
     self.add_result('Reserved', 0, 3, 7)
+
+class MultiByteKsvParser(MultiByteParser):
+  def bit_weight(self, x):
+    weight = 0
+    for i in x:
+      weight += bin(i).count('1')
+    return '{} 1s, {} 0s'.format(weight, 40 - weight)
+
+  def parse(self):
+    self.add_result(self.bit_weight)
+
+class MultiByteBksv(MultiByteKsvParser):
+  name = 'Bksv'
+  start = 0x68000
+  end = 0x68004
+
+class MultiByteR0Prime(MultiByteParser):
+  name = 'R0`'
+  start = 0x68005
+  end = 0x68006
+
+  def parse(self):
+    self.add_result()
+
+class MultiByteAksv(MultiByteKsvParser):
+  name = 'Aksv'
+  start = 0x68007
+  end = 0x6800B
+
+class MultiByteAn(MultiByteParser):
+  name = 'An'
+  start = 0x6800C
+  end = 0x68013
+
+  def parse(self):
+    self.add_result()
+
+class MultiByteVPrimeH0(MultiByteParser):
+  name = 'V`H0'
+  start = 0x68014
+  end = 0x68017
+
+  def parse(self):
+    self.add_result()
+
+class MultiByteVPrimeH1(MultiByteParser):
+  name = 'V`H1'
+  start = 0x68018
+  end = 0x6801B
+
+  def parse(self):
+    self.add_result()
+
+class MultiByteVPrimeH2(MultiByteParser):
+  name = 'V`H2'
+  start = 0x6801C
+  end = 0x6801F
+
+  def parse(self):
+    self.add_result()
+
+class MultiByteVPrimeH3(MultiByteParser):
+  name = 'V`H3'
+  start = 0x68020
+  end = 0x68023
+
+  def parse(self):
+    self.add_result()
+
+class MultiByteVPrimeH4(MultiByteParser):
+  name = 'V`H4'
+  start = 0x68024
+  end = 0x68027
+
+  def parse(self):
+    self.add_result()
+
+class RangeBcaps(RangeParser):
+  name = 'Bcaps'
+  start = 0x68028
+  end = 0x68028
+
+  def parse(self):
+    self.add_result('Reserved', 0, 2, 7)
+    self.add_result('REPEATER', 0, 1)
+    self.add_result('HDCP_CAPABLE', 0, 0)
+
+class RangeBstatus(RangeParser):
+  name = 'Bstatus'
+  start = 0x68029
+  end = 0x68029
+
+  def parse(self):
+    self.add_result('Reserved', 0, 4, 7)
+    self.add_result('REAUTHENTICATION_REQUEST', 0, 3)
+    self.add_result('LINK_INTEGRITY_FAILURE', 0, 2)
+    self.add_result('R0`_AVAILABLE', 0, 1)
+    self.add_result('READY', 0, 0)
+
+class RangeBinfo(RangeParser):
+  name = 'Binfo'
+  start = 0x6802A
+  end = 0x6802B
+
+  def parse(self):
+    self.add_result('MAX_DEVS_EXCEEDED', 0, 7)
+    self.add_result('DEVICE_COUNT', 0, 0, 6)
+    self.add_result('Reserved', 1, 4, 7)
+    self.add_result('MAX_CASCADE_EXCEEDED', 1, 3)
+    self.add_result('DEPTH', 1, 0, 2)
+
+class MultiByteKsvFifo(MultiByteParser):
+  name = 'KSV FIFO'
+  start = 0x6802C
+  end = 0x6803A
+
+  def parse(self):
+    self.add_result()
+
+class RangeAinfo(RangeParser):
+  name = 'Ainfo'
+  start = 0x6803B
+  end = 0x6803B
+
+  def parse(self):
+    self.add_result('Reserved', 0, 1, 7)
+    self.add_result('REAUTHENTICATION_ENABLE_IRQ_HPD', 0, 0)
+
+class RangeCPReserved(RangeParser):
+  name = 'RESERVED'
+  start = 0x6803C
+  end = 0x6803C
+
+  def parse(self):
+    self.add_result('Reserved', 0, 0, 7)
 
 class Parser(object):
   def __init__(self):
