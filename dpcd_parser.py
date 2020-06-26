@@ -25,14 +25,14 @@ def log_bytes_to_list(log_bytes):
 
 def log_reader():
   logs = []
-  patt_timestamp = r'\[\s+[0-9]+\s+([0-9]+\.[0-9]+)\]'
-  patt_function = r'\[drm_dp_dpcd_(read|write)\]'
+  patt_timestamp = r'(?:\[\s*(?:[0-9]+\s+)?([0-9]+\.[0-9]+)\])'
+  patt_function = r'\[(?:drm:)?drm_dp_dpcd_(read|write)\]'
   patt_port = r'([\S]+):'
   patt_addr = r'0x([0-9A-Fa-f]+)'
   patt_type = r'([\S]+)'
   patt_dir = r'[-><]{2}'
   patt_ret = r'\(ret=\s+([0-9-]+)\)'
-  patt_data = r'(([0-9a-fA-F]{2}\s?)+)'
+  patt_data = r'((?:[0-9a-fA-F]{2}\s?)+)'
   patt_whitespace = r'\s+'
   pattern = r'{ts}{ws}{fn}{ws}{pt}{ws}{ad}{ws}{tp}{ws}{dr}{ws}{rt}{ws}{dt}'.format(
     ts=patt_timestamp, fn=patt_function, pt=patt_port, ad=patt_addr, tp=patt_type,
