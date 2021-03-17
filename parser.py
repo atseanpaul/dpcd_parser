@@ -82,6 +82,8 @@ class RangeParser(ParserBase):
       end_bit = start_bit
     if end_bit < start_bit:
       raise ValueError('Inverted start/end bits!')
+    if offset >= len(self.value):
+      raise ValueError(f'Invalid offset {offset} len={len(self.value)}!')
     value = self.field(self.value[offset], start_bit, end_bit)
     result = RangeParser.Result(self.name, start_bit, end_bit, label, value, printfn(value))
     self.parse_result.append(result)
@@ -341,6 +343,10 @@ class RangeDetailedCapInfo(RangeParser):
     self.add_result('NON_EDID_DFPX_ATTRIBUTE', 0, 4, 7, self.dfpx_attribute)
     self.add_result('DFPX_HPD', 0, 3, 3, lambda x: 'HPD Aware' if x else 'HPD Unaware')
     self.add_result('DFPX_TYPE', 0, 0, 2, self.dfpx_type)
+    # Detailed cap info for downstream ports isn't always available
+    if len(self.value) <= 1:
+      return
+
     # DP
     type = self.field(self.value[0], 0, 2)
     if type == 0:
