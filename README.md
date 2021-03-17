@@ -87,10 +87,10 @@ $ ./dpcd_parser.py --dpcd "12 14 c2 01 01 15 01 81 02 01 04 01 0f 00 01"
 
 
 ### Parse DRM/KMS logs
-Use the --logs argument to paste drm/kms debug logs into stdin. The tool will pull out the DPCD operations and parse them, it will ignore all other log messages, so just dump the whole log in. Insert a blank line to terminate stdin read.
+Use the --logs argument to paste or stream drm/kms debug logs into stdin. The tool will pull out the DPCD operations and parse them, it will ignore all other log messages, so just dump the whole log in. Insert a blank line to terminate stdin read if pasting.
 
 ```
-$ ./dpcd_parser.py --logs
+$ cat /sys/kernel/debug/tracing/instances/drm/trace_pipe | ./dpcd_parser.py --logs
 [  2 258946.147062] [intel_dp_detect] [CONNECTOR:90:DP-2]
 [  2 258946.147063] [intel_power_well_get] enabling power well 2
 [  2 258946.147473] [drm_dp_dpcd_read] DPDDC-C: 0x00000 AUX -> (ret= 15) 12 14 e4 01 a1 01 01 81 00 00 04 00 3f 00 01

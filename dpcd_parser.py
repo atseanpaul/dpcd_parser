@@ -46,14 +46,18 @@ def log_reader():
     line = line.rstrip()
     m = regex.findall(line)
     if m:
-      logs.append(DrmLog(operation=m[0][1],
-                   port=m[0][2],
-                   offset=int(m[0][3], 16),
-                   type=m[0][4],
-                   retcode=int(m[0][5]),
-                   bytes=log_bytes_to_list(m[0][6]),
-                   timestamp=m[0][0]))
-  return logs
+      d = DrmLog(operation=m[0][1],
+                 port=m[0][2],
+                 offset=int(m[0][3], 16),
+                 type=m[0][4],
+                 retcode=int(m[0][5]),
+                 bytes=log_bytes_to_list(m[0][6]),
+                 timestamp=m[0][0])
+      p = parser.Parser()
+      p.parse(d.bytes, d.offset)
+      print('')
+      print('[{}] {} {} [{}:{}] on {}'.format(d.timestamp, d.type, d.operation, hex(d.offset), hex(d.offset + len(d.bytes) - 1), d.port))
+      p.print()
 
 def main():
   arg_parser = argparse.ArgumentParser(description='Parse DPCD registers')
@@ -69,13 +73,6 @@ def main():
 
   if args.logs:
     data = log_reader()
-    for d in data:
-      p = parser.Parser()
-      p.parse(d.bytes, d.offset)
-      print('')
-      print('[{}] {} {} [{}:{}] on {}'.format(d.timestamp, d.type, d.operation, hex(d.offset), hex(d.offset + len(d.bytes) - 1), d.port))
-      p.print()
-
 
 if __name__ == '__main__':
   main()
