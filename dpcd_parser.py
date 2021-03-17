@@ -24,7 +24,7 @@ def log_bytes_to_list(log_bytes):
   return ret
 
 def log_reader():
-  patt_ts = r'(?:.{16}-[0-9]+\s+\[[0-9]+\] .{4}\s+[0-9]+\.[0-9]+: drm_trace_printf:)'
+  patt_ts = r'(?:.{16}-[0-9]+\s+\[[0-9]+\] .{4}\s+([0-9]+\.[0-9]+): drm_trace_printf:)'
   patt_legacy_ts = r'(?:\[\s*(?:[0-9]+\s+)?([0-9]+\.[0-9]+)\])'
   patt_timestamp = f'(?:{patt_ts}|{patt_legacy_ts})'
   patt_function = r'\[(?:drm:)?drm_dp_dpcd_(read|write)\]'
@@ -46,13 +46,13 @@ def log_reader():
     line = line.rstrip()
     m = regex.findall(line)
     if m:
-      d = DrmLog(operation=m[0][1],
-                 port=m[0][2],
-                 offset=int(m[0][3], 16),
-                 type=m[0][4],
-                 retcode=int(m[0][5]),
-                 bytes=log_bytes_to_list(m[0][6]),
-                 timestamp=m[0][0])
+      d = DrmLog(operation=m[0][2],
+                 port=m[0][3],
+                 offset=int(m[0][4], 16),
+                 type=m[0][5],
+                 retcode=int(m[0][6]),
+                 bytes=log_bytes_to_list(m[0][7]),
+                 timestamp=m[0][0] if m[0][0] else m[0][1])
       p = parser.Parser()
       p.parse(d.bytes, d.offset)
       print('')
