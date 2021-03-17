@@ -24,13 +24,14 @@ def log_bytes_to_list(log_bytes):
   return ret
 
 def log_reader():
-  logs = []
-  patt_timestamp = r'(?:\[\s*(?:[0-9]+\s+)?([0-9]+\.[0-9]+)\])'
+  patt_ts = r'(?:.{16}-[0-9]+\s+\[[0-9]+\] .{4}\s+[0-9]+\.[0-9]+: drm_trace_printf:)'
+  patt_legacy_ts = r'(?:\[\s*(?:[0-9]+\s+)?([0-9]+\.[0-9]+)\])'
+  patt_timestamp = f'(?:{patt_ts}|{patt_legacy_ts})'
   patt_function = r'\[(?:drm:)?drm_dp_dpcd_(read|write)\]'
-  patt_port = r'([\S]+):'
+  patt_port = r'([^:]+):'
   patt_addr = r'0x([0-9A-Fa-f]+)'
   patt_type = r'([\S]+)'
-  patt_dir = r'[-><]{2}'
+  patt_dir = r'-[><]'
   patt_ret = r'\(ret=\s+([0-9-]+)\)'
   patt_data = r'((?:[0-9a-fA-F]{2}\s?)+)'
   patt_whitespace = r'\s+'
