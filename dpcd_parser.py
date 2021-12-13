@@ -40,24 +40,41 @@ def log_reader():
     dr=patt_dir,rt=patt_ret,dt=patt_data,ws=patt_whitespace
   )
   regex = re.compile(pattern)
+  d = None
+  is_followon = False
   for line in sys.stdin:
     if line == '\n':
       break
     line = line.rstrip()
     m = regex.findall(line)
-    if m:
+    if not m:
+      continue
+
+    offset = int(m[0][4], 16)
+    if not is_followon:
       d = DrmLog(operation=m[0][2],
                  port=m[0][3],
-                 offset=int(m[0][4], 16),
+                 offset=offset,
                  type=m[0][5],
                  retcode=int(m[0][6]),
                  bytes=log_bytes_to_list(m[0][7]),
                  timestamp=m[0][0] if m[0][0] else m[0][1])
-      p = parser.Parser()
-      p.parse(d.bytes, d.offset)
-      print('')
-      print('[{}] {} {} [{}:{}] on {}'.format(d.timestamp, d.type, d.operation, hex(d.offset), hex(d.offset + len(d.bytes) - 1), d.port))
-      p.print()
+    else:
+      d = d._replace(bytes=d.bytes + log_bytes_to_list(m[0][7]))
+
+    p = parser.Parser()
+    print(f'CHECK FOLLOWON ts={d.timestamp} off={hex(offset)} d_off={hex(d.offset)}')
+    if p.followon_range(d.bytes, offset):
+      print(f'NEED FOLLOWON {hex(d.offset)}')
+      is_followon = True
+      continue
+    else:
+      is_followon = False
+
+    p.parse(d.bytes, d.offset)
+    print('')
+    print('[{}] {} {} [{}:{}] on {}'.format(d.timestamp, d.type, d.operation, hex(d.offset), hex(d.offset + len(d.bytes) - 1), d.port))
+    p.print()
 
 def main():
   arg_parser = argparse.ArgumentParser(description='Parse DPCD registers')

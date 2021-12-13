@@ -19,7 +19,11 @@ class MultiByteParser(ParserBase):
     self.output = None
 
   @classmethod
-  def can_parse(cls, start):
+  def need_followon(cls, start, bytes):
+    return False
+
+  @classmethod
+  def can_parse(cls, start, bytes):
     # TODO: add partial parsing support
     if start >= cls.start and start <= cls.end:
       return True
@@ -30,6 +34,11 @@ class MultiByteParser(ParserBase):
 
   def add_result(self, printfn=lambda x: x):
     self.output = printfn(self.value)
+
+    value = 0
+    for i,v in enumerate(self.value):
+      value += v << (i * 8)
+    return value
 
   def print(self):
     print('  {:<10}{:<41}[{}]'.format(hex(type(self).start),
@@ -61,7 +70,11 @@ class RangeParser(ParserBase):
     self.parse_result = []
 
   @classmethod
-  def can_parse(cls, start):
+  def need_followon(cls, start, bytes):
+    return False
+
+  @classmethod
+  def can_parse(cls, start, bytes):
     # Only support parsing from the beginning of the range
     # TODO: maybe add partial parsing at some point
     if start == cls.start:
@@ -88,13 +101,44 @@ class RangeParser(ParserBase):
     result = RangeParser.Result(self.name, start_bit, end_bit, label, value, printfn(value))
     self.parse_result.append(result)
 
+    return value
+
+  def add_multi_result(self, label, offset, start_bit, end_bit, printfn=lambda x: x):
+    if start_bit == end_bit:
+      raise ValueError(f'Invalid range {start_bit}->{end_bit}!')
+    elif abs(start_bit - end_bit) > (len(self.value) * 8):
+      raise ValueError(f'Invalid range {start_bit} - {end_bit} > len={len(self.value)}!')
+
+    if start_bit < end_bit:
+      offset_end = offset + int(end_bit / 8)
+      s_value = self.value[offset:(offset_end + 1)]
+      s_start_bit = start_bit
+      s_end_bit = end_bit
+    else:
+      offset_end = offset + int(start_bit / 8)
+      s_value = self.value[offset:(offset_end + 1)]
+      s_value.reverse()
+      s_start_bit = end_bit
+      s_end_bit = start_bit
+
+    total = 0
+    for i,v in enumerate(s_value):
+      total += v << (i * 8)
+
+    value = self.field(total, s_start_bit, s_end_bit)
+
+    result = RangeParser.Result(self.name, start_bit, end_bit, label, value, printfn(value))
+    self.parse_result.append(result)
+
+    return value
+
   def print(self):
     print('  {:<10}{:<41}[{}]'.format(hex(type(self).start),
                                    type(self).name,
                               ', '.join(hex(x) for x in self.value)))
     for v in self.parse_result:
-      print('    [{:<3}{}:{}] {:40}{}'.format(
-              v.value,
+      print('    [{:<8} {}:{}] {:40}{}'.format(
+              hex(v.value),
               v.start_bit,
               v.end_bit,
               v.label,
@@ -616,13 +660,190 @@ class MultiByteUpReply(MultiByteParser):
   def parse(self):
     self.add_result()
 
-class MultiByteDownReply(MultiByteParser):
+class RangeDownReplyParser(RangeParser):
   name = 'DOWN_REP'
   start = 0x1400
   end = 0x15FF
 
+  @classmethod
+  def can_parse(cls, start, bytes):
+    if start < cls.start or start > cls.end or (start % 16) != 0:
+      return False
+
+    print(f'start={hex(start)} bytes={bytes}')
+    lct = (bytes[0] >> 4) & 0x0F;
+    print(f'lct={lct} idx={1 + int(lct / 2) + 2} len={len(bytes)}')
+    request_id = bytes[1 + int(lct / 2) + 2]
+    print(f'request_id={hex(request_id)}')
+    return request_id == cls.request_id
+
+  def parse_sideband_header(self):
+    num_links = self.add_result('Link Count Total', 0, 4, 7)
+    self.add_result('Link Count Remaining', 0, 0, 3)
+    for i in range(0, num_links - 1):
+      start_bit = 0 if (i % 2) == 0 else 4
+      self.add_result(f'link[{i}]: Relative Address', 1 + i, start_bit, start_bit + 3)
+    cur = 1 + int(num_links / 2)
+    if num_links > 1 and (num_links % 2) != 0:
+      self.add_result(f'zeros', cur, 4, 7)
+      cur += 1
+    self.add_result('Broadcast Message', cur, 7, 7)
+    self.add_result('Path Message', cur, 6, 6)
+    self.add_result('Body Length', cur, 0, 5)
+    cur += 1
+    self.add_result('Start of Message Transmission', cur, 7, 7)
+    self.add_result('End of Message Transmission', cur, 6, 6)
+    self.add_result('Zero', cur, 5, 5)
+    self.add_result('Message Sequence Number', cur, 4, 4)
+    self.add_result('Header CRC', cur, 0, 3)
+    return cur + 1
+
+class RangeDownRepMessageTransactionVersion(RangeDownReplyParser):
+  request_id = 0x00
+
   def parse(self):
-    self.add_result()
+    cur = self.parse_sideband_header()
+    self.add_result('Request ID', cur, 0, 7, printfn=lambda x: 'GET_MESSAGE_TRANSACTION_VERSION')
+    self.add_result('Transaction Version Number', cur + 1, 0, 7)
+
+class RangeDownRepLinkAddress(RangeDownReplyParser):
+  request_id = 0x01
+
+  @classmethod
+  def need_followon(cls, start, bytes):
+    ret = start == cls.start #TODO: Need to count number of device type 5's
+    print(f'{"NEED" if ret else "no need"} followon: {hex(start)} {hex(cls.start)} {bytes}')
+    return ret
+
+  def parse(self):
+    cur = self.parse_sideband_header()
+    self.add_result('Request ID', cur, 0, 7, printfn=lambda x: 'LINK_ADDRESS')
+    self.add_multi_result('Global Unique Id', cur + 1, 0, 127)
+    self.print()
+    print(' '.join('{:02x}'.format(x) for x in self.value))
+    ports = self.add_result('Ports', cur + 17, 0, 3)
+    print(f'PORTS={hex(ports)} cur={cur + 17} val={hex(self.value[cur + 17])}/{self.value[cur + 17]}')
+
+    cur += 18
+    print(f'PORTS={hex(ports)} cur={cur} val={hex(self.value[cur])}/{self.value[cur]}')
+    for i in range(0, ports):
+      is_input = self.add_result(f'p[{i}]: Is Input', cur, 0, 0, printfn=lambda x: 'Yes' if x else 'No')
+      dev_type = self.add_result(f'p[{i}]: Peer Device Type', cur, 1, 3)
+      self.add_result(f'p[{i}]: Port Number', cur, 4, 7)
+
+      self.add_result(f'p[{i}]: Messaging Capability Status', cur + 1, 0, 0)
+      self.add_result(f'p[{i}]: DP Device Plug Status', cur + 1, 1, 1)
+      
+      if dev_type == 5:
+        print(f'DEV_TYPE={dev_type}')
+        self.add_multi_result(f'p[{i}]: Current Capabilities', cur + 1, 2, 130)
+        cur += 16
+
+      if not is_input:
+        self.add_result(f'p[{i}]: Legacy Plug Status', cur + 1, 2, 2)
+        self.add_result(f'p[{i}]: Zeros', cur + 1, 3, 7)
+        self.add_result(f'p[{i}]: DPCD Revision', cur + 2, 0, 7)
+        self.add_multi_result('p[{i}]: Global Unique Id', cur + 3, 0, 127)
+        self.add_multi_result('p[{i}]: Num SDP Streams', cur + 19, 0, 3)
+        self.add_multi_result('p[{i}]: Num SDP Stream Sinks', cur + 19, 4, 7)
+        cur += 20
+      else:
+        self.add_multi_result('p[{i}]: Zeros', cur + 1, 2, 7)
+        cur += 1
+
+class RangeDownRepEnumPathResources(RangeDownReplyParser):
+  request_id = 0x00
+
+  def parse(self):
+    self.add_result('Request ID', 0, 0, 7, printfn=lambda x: 'GET_MESSAGE_TRANSACTION_VERSION')
+    self.add_result('Message Txn Version Number', 1, 0, 7)
+
+class RangeDownRepEnumPathResources(RangeDownReplyParser):
+  request_id = 0x10
+
+  def parse(self):
+    self.add_result('Request ID', 0, 0, 7, printfn=lambda x: 'ENUM_PATH_RESOURCES')
+    self.add_result('Port', 1, 0, 3)
+    self.add_multi_result('BW Number Available[multi]', 2, 15, 0)
+    self.add_multi_result('Payload BW Number[multi]', 4, 15, 0)
+
+class RangeDownRepAllocatePayload(RangeDownReplyParser):
+  request_id = 0x11
+
+  def parse(self):
+    self.add_result('Request ID', 0, 0, 7, printfn=lambda x: 'ALLOCATE_PAYLOAD')
+    self.add_result('Port Number', 1, 0, 3)
+    self.add_result('Zeros', 1, 4, 7)
+    self.add_result('Virtual Channel PBN', 2, 0, 7)
+    self.add_result('Allocated PBN', 3, 0, 15)
+
+class RangeDownRepQueryPayload(RangeDownReplyParser):
+  request_id = 0x12
+
+  def parse(self):
+    self.add_result('Request ID', 0, 0, 7, printfn=lambda x: 'QUERY_PAYLOAD')
+    self.add_result('Port Number', 1, 0, 3)
+    self.add_result('Zeros', 1, 4, 7)
+    self.add_multi_result('Allocated PBN', 2, 0, 16)
+
+class RangeDownRepRemoteDPCDRead(RangeDownReplyParser):
+  request_id = 0x20
+
+  def parse(self):
+    self.add_result('Request ID', 0, 0, 7, printfn=lambda x: 'REMOTE_DPCD_READ')
+    self.add_result('Zeros', 1, 0, 3)
+    self.add_result('Port Number', 1, 4, 7)
+    num_bytes = self.add_result('Number of Bytes', 2, 0, 7)
+    for i in range(0, min(num_bytes, len(self.value) - 3)):
+      self.add_result(f'data[{i}]', 3 + i, 0, 7)
+
+'''
+class MultiByteDownReply(RangeParser):
+  name = 'DOWN_REP'
+  start = 0x1400
+  end = 0x15FF
+
+  @staticmethod
+  def printfn_reqid(value):
+    if value == 0x00:
+      return 'GET_MESSAGE_TRANSACTION_VERSION'
+    elif value == 0x01:
+      return 'LINK_ADDRESS'
+    elif value == 0x02:
+      return 'CONNECTION_STATUS_NOTIFY'
+    elif value == 0x10:
+      return 'ENUM_PATH_RESOURCES'
+    elif value == 0x11:
+      return 'ALLOCATE_PAYLOAD'
+    elif value == 0x12:
+      return 'QUERY_PAYLOAD'
+    elif value == 0x13:
+      return 'RESOURCE_STATUS_NOTIFY'
+    elif value == 0x14:
+      return 'CLEAR_PAYLOAD_ID_TABLE'
+    elif value == 0x20:
+      return 'REMOTE_DPCD_READ'
+    elif value == 0x21:
+      return 'REMOTE_DPCD_WRITE'
+    elif value == 0x22:
+      return 'REMOTE_I2C_READ'
+    elif value == 0x23:
+      return 'REMOTE_I2C_WRITE'
+    elif value == 0x24:
+      return 'POWER_UP_PHY'
+    elif value == 0x25:
+      return 'POWER_DOWN_PHY'
+    elif value == 0x30:
+      return 'SINK_EVENT_NOTIFY'
+    elif value == 0x38:
+      return 'QUERY_STREAM_ENCRYPTION_STATUS'
+    else:
+      return 'NOT FOUND'
+
+  def parse(self):
+    self.add_result('Request ID', 0, 0, 7, printfn=MultiByteDownReply.printfn_reqid)
+    self.add_result('Request ID', 0, 0, 7, printfn=MultiByteDownReply.printfn_reqid)
+'''
 
 class MultiByteUpRequest(MultiByteParser):
   name = 'UP_REQ'
@@ -868,13 +1089,26 @@ class Parser(object):
       ret.append(cls)
     return ret
 
+  def get_parser(self, bytes, offset):
+    for r in self.registry:
+      if not r.can_parse(offset, bytes):
+        continue
+      return r
+    return None
+
+  def followon_range(self, bytes, offset):
+    p = self.get_parser(bytes, offset)
+    if not p or not p.need_followon(offset, bytes):
+      return None
+    return (p.start, p.end)
+
   def parse(self, bytes, offset):
     i = 0
     while i < len(bytes):
       addr = i + offset
       parsed_bytes = 0
       for r in self.registry:
-        if not r.can_parse(addr):
+        if not r.can_parse(addr, bytes[i:]):
           continue
 
         parser = r(bytes, i)
